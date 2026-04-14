@@ -1,4 +1,4 @@
-//Adriana Sánchez-Bravo Cuesta y Yuri Villaverde Sanmartin
+//Adriana Sánchez-Bravo Cuesta y Alan
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -8,20 +8,24 @@
 #include <semaphore.h>
 
 #define N 10
-#define TOTAL 9
+#define TOTAL 20
 
 int buffer[N];
 int num_elementos = 0; 
 int principio= 0;
 int final= 0;
 
+//numero de hilos
+int num_p, num_c;
+
 // contadores de progreso
 int producidos = 0;
 int consumidos = 0;
 
-// contadores de vocales
+// contadores de lsa sumas
 int suma_prod= 0;
 int suma_cons= 0;
+
 // semaforos
 sem_t huecos;
 sem_t elementos;
@@ -38,14 +42,30 @@ void* funcion_productor(void* arg) {
         sem_wait(&sem_buffer);
 
         // si ya acabamos, liberamos y avisamos a otro por si acaso esta dormido
-        if (producidos >= TOTAL) {
+        /*if (producidos >= TOTAL) {
             sem_post(&sem_buffer);
             sem_post(&huecos); 
             break;
-        }
+        }*/
 
         int num;
-        fscanf(f, "%d", &num);
+        int comprobar= fscanf(f, "%d", &num);
+
+        if(comprobar != 1){
+            sem_post(&sem_buffer);
+            
+            for (int i = 0; i < num_c; i++) {
+            sem_wait(&huecos);
+            sem_wait(&sem_buffer);
+
+            buffer[final] = -1;
+            final = (final + 1) % N;
+
+            sem_post(&sem_buffer);
+            sem_post(&elementos);
+            }
+            break;
+        }
 
         buffer[final] = num;
         final= (final+1) %N;
@@ -79,28 +99,24 @@ void* funcion_consumidor(void* arg) {
         sem_wait(&elementos);
         sem_wait(&sem_buffer);
 
-        if (consumidos >= TOTAL) {
-            sem_post(&sem_buffer);
-            sem_post(&elementos); 
-            break;
-        }
 
         // saca la letra (LIFO)
         int num = buffer[principio];
+        
+        if(num== -1){
+            sem_post(&sem_buffer);
+            sem_post(&huecos); 
+            break;
+        }
         buffer[principio] = 0;
         principio= (principio +1) %N;
         num_elementos--;
         consumidos++; 
 
-        printf("\tConsumidor %d saca '%d' (%d/%d)\n", id, num, consumidos, TOTAL);
+        printf("\tConsumidor %d saca '%d' (%d)\n", id, num, consumidos);
 
         // contar
         suma_cons+= num;
-
-        if (consumidos >= TOTAL) {
-            sem_post(&elementos); 
-            sem_post(&huecos); 
-        }
 
         sem_post(&sem_buffer);
         sem_post(&huecos);
@@ -112,7 +128,6 @@ void* funcion_consumidor(void* arg) {
 }
 
 int main() {
-    int num_p, num_c;
 
     printf("Numero de productores: ");
     scanf("%d", &num_p);
