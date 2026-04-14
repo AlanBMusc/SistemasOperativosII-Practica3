@@ -1,4 +1,4 @@
-//Adriana Sánchez-Bravo Cuesta y Alan
+//Adriana Sánchez-Bravo Cuesta y Yuri Villaverde Sanmartin
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -8,19 +8,20 @@
 #include <semaphore.h>
 
 #define N 10
+#define TOTAL 9
 
 int buffer[N];
 int num_elementos = 0; 
-int in= 0; //indices para fifo
-int out= 0;
+int principio= 0;
+int final= 0;
 
 // contadores de progreso
 int producidos = 0;
 int consumidos = 0;
 
-// suma
-int suma= 0;
-
+// contadores de vocales
+int suma_prod= 0;
+int suma_cons= 0;
 // semaforos
 sem_t huecos;
 sem_t elementos;
@@ -36,20 +37,30 @@ void* funcion_productor(void* arg) {
         sem_wait(&huecos);
         sem_wait(&sem_buffer);
 
-        int num;
-        if (fscanf(f, "%d", &num) != 1) {
+        // si ya acabamos, liberamos y avisamos a otro por si acaso esta dormido
+        if (producidos >= TOTAL) {
             sem_post(&sem_buffer);
-            sem_post(&huecos);
+            sem_post(&huecos); 
             break;
         }
 
-        buffer[in] = num;
-        in= (in+1)%N;
+        int num;
+        fscanf(f, "%d", &num);
+
+        buffer[final] = num;
+        final= (final+1) %N;
         num_elementos++;
         producidos++; 
 
-        printf("Productor %d mete %d (%d)\n", id, num, producidos);
+        printf("Productor %d mete '%d' (%d/%d)\n", id, num, producidos, TOTAL);
 
+        suma_prod+= num;
+
+        // si soy el que llega al limite, despierto a los demas para que no haya deadlock
+        if (producidos >= TOTAL) {
+            sem_post(&huecos); 
+            sem_post(&elementos); 
+        }
 
         sem_post(&sem_buffer);
         sem_post(&elementos);
@@ -68,17 +79,28 @@ void* funcion_consumidor(void* arg) {
         sem_wait(&elementos);
         sem_wait(&sem_buffer);
 
-        // saca la letra (FIFO)
-        int num = buffer[out];
-        buffer[out] = 0;
-        out= (out+1)%N;
+        if (consumidos >= TOTAL) {
+            sem_post(&sem_buffer);
+            sem_post(&elementos); 
+            break;
+        }
+
+        // saca la letra (LIFO)
+        int num = buffer[principio];
+        buffer[principio] = 0;
+        principio= (principio +1) %N;
         num_elementos--;
         consumidos++; 
 
-        printf("\tConsumidor %d saca %d (%d)\n", id, num, consumidos);
+        printf("\tConsumidor %d saca '%d' (%d/%d)\n", id, num, consumidos, TOTAL);
 
-        // contamos si es vocal
-        suma+= num;       
+        // contar
+        suma_cons+= num;
+
+        if (consumidos >= TOTAL) {
+            sem_post(&elementos); 
+            sem_post(&huecos); 
+        }
 
         sem_post(&sem_buffer);
         sem_post(&huecos);
@@ -135,8 +157,9 @@ int main() {
     for (int i = 0; i < num_c; i++) pthread_join(hilos_c[i], NULL);
 
     printf("\nTotal producidos: %d\n", producidos);
+    printf("Suma productor= %d\n", suma_prod);
     printf("Total consumidos: %d\n", consumidos);
-    printf("Suma= %d\n", suma);
+    printf("Suma del consumidor= %d\n", suma_cons);
 
     // limpiamos todo
     sem_destroy(&huecos);
