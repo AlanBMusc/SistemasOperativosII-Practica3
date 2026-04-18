@@ -118,7 +118,7 @@ void* funcion_productor(void* arg) {
         insert_item(it_aux); 
         producidos++; 
 
-        printf("[%ld ms] Productor %d (Prio %d) mete '%d' [Caducidad: %ds]\n", 
+        printf("[%ld ms] Productor %d (Prio %d) mete '%d' [Producidos: %ds]\n", 
                 get_timestamp(), id, it_aux.prioridad, it_aux.valor, producidos);
 
         pthread_cond_signal(&condc); 
