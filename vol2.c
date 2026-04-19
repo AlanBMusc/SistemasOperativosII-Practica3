@@ -13,8 +13,11 @@
 typedef struct {
     int valor;
     int prioridad;   
-    int origen;     
-    int activo;  
+    int origen;      
+    time_t t_creacion; //almacena el segundo en el que se creo
+    int caducidad;     //tiempo de vida random
+    int activo;        
+                       
 } Item; 
 
 //memoria compartida
@@ -37,6 +40,14 @@ pthread_cond_t condc = PTHREAD_COND_INITIALIZER;
 
 FILE *ficheros[3]; 
 
+//funcion para medir el tiempo
+long get_timestamp() { 
+    struct timeval tv;
+    //coge el tiempo del sistema
+    gettimeofday(&tv, NULL);
+    //cambia para devolver en milisegundos
+    return (tv.tv_sec * 1000) + (tv.tv_usec / 1000);
+}
 
 //cada llamada lee un número del archivo de texto y lo mete en la estructura
 int produce_item(int id, Item *it) { 
@@ -45,7 +56,9 @@ int produce_item(int id, Item *it) {
         it->valor = num;
         it->prioridad = id; 
         it->origen = id;
-        it->activo = 1;
+        it->t_creacion = time(NULL); //se registra el momento en el que se creo
+        it->caducidad = (rand() % 12) + 1; //caducidad aleatoria
+        it->activo = 1; 
         return 1;
     }
     return -1; 
@@ -93,7 +106,7 @@ void consume_item(Item it) {
     suma_ficheros[it.origen-1] += it.valor;
 }
 
-//funcion del hilo productor 
+//funcion de los hilos productores 
 void* funcion_productor(void* arg) {
     int id = *(int*)arg; 
     Item it_aux;
@@ -102,7 +115,7 @@ void* funcion_productor(void* arg) {
     while (1) { 
         //se calcula el sleep aleatorio
         sleep((rand() % 6) + 1); 
-        
+
         //se bloquea el acceso al buffer
         pthread_mutex_lock(&mutex); 
 
@@ -113,26 +126,26 @@ void* funcion_productor(void* arg) {
 
         //lee el numero del fichero 
         //si es el final del archivo devuelve -1 y el productor acaba
-        if (produce_item(id, &it_aux) == -1) {
+        if (produce_item(id, &it_aux) == -1){
             //el contador de productores que estan en funcionamiento baja para avisar al
             //consumidor si todos acaban
-            productores_vivos--;   
+            productores_vivos--;  
             
             //se lanza una señal para desbloquear todos los consumidores, aunque en este
             //caso solo se trata de uno
-            pthread_cond_broadcast(&condc); 
-            
+            pthread_cond_broadcast(&condc);  
+
             //se desbloquea el acceso al buffer y se sale del if
             pthread_mutex_unlock(&mutex);  
             break;
-        }
+        } 
 
         //se añade la estructura con el numero al buffer
         insert_item(it_aux); 
         producidos++; 
 
-        printf("Productor %d (Prio %d) mete '%d (%d)' \n", 
-                id, it_aux.prioridad, it_aux.valor, producidos);
+        printf("[%ld ms] Productor %d (Prio %d) mete '%d' [Caducidad: %ds] (%d)\n", 
+                get_timestamp(), id, it_aux.prioridad, it_aux.valor, it_aux.caducidad, producidos);
 
         pthread_cond_signal(&condc); 
         pthread_mutex_unlock(&mutex); 
@@ -145,6 +158,7 @@ void* funcion_productor(void* arg) {
 void* funcion_consumidor(void* arg) {
 
     while (1) { 
+
         //bloquea el acceso a memoria
         pthread_mutex_lock(&mutex); 
 
@@ -163,27 +177,42 @@ void* funcion_consumidor(void* arg) {
 
         //quita el numero del buffer y aumenta el contador de elementos consumidos
         Item it = remove_item_prioridad(); 
-        consumidos++; 
-
-        printf("\tConsumidor extrae de Prod %d (Prio %d) valor '%d' (%d)\n", 
-                it.origen, it.prioridad, it.valor, consumidos);
-
-        pthread_cond_signal(&condp); 
-        pthread_mutex_unlock(&mutex); 
-
-        //se calcula el sleep aleatorio
-        sleep((rand() % 3) + 1); 
-
-        //se realizan las sumas
-        consume_item(it);
         
+
+        //se calcula el tiempo en el que se quita el numero del buffer para la caducidad
+        time_t t_actual = time(NULL);
+        //tiempo entre su creacion y su retirada del buffer
+        double tiempo_transcurrido = difftime(t_actual, it.t_creacion);
+
+        //si es mayor que la caducidad, el numero no sirve
+        if (tiempo_transcurrido > it.caducidad) {
+            printf("[%ld ms]\t(Caducado) Prod %d (Prio %d) valor '%d' tras %.0fs (Max: %ds)\n", 
+                    get_timestamp(), it.origen, it.prioridad, it.valor, tiempo_transcurrido, it.caducidad);
+            
+                    pthread_cond_signal(&condp); 
+            pthread_mutex_unlock(&mutex);
+        } 
+        else { //si esta dentro de la caducidad
+            consumidos++; 
+            printf("[%ld ms]\tConsumidor extrae de Prod %d (Prio %d) valor '%d' (%d)\n", 
+                    get_timestamp(), it.origen, it.prioridad, it.valor, consumidos);
+
+            pthread_cond_signal(&condp); 
+            pthread_mutex_unlock(&mutex); 
+
+            //se calcula el sleep aleatorio
+            sleep((rand() % 3) + 1); 
+
+            //se realizan las sumas
+            consume_item(it); 
+
+            
+        }
     }
     pthread_exit(NULL);
 }
 
-
 int main(int argc, char *argv[]) { 
-    
     if (argc < 4) { 
         printf("Uso: %s <f1.txt> <f2.txt> <f3.txt>\n", argv[0]);
         return 1;
@@ -196,7 +225,7 @@ int main(int argc, char *argv[]) {
         if (ficheros[i] == NULL) { return 1; }
     }
 
-    // Inicialización del buffer como inactivo
+    // Inicialización explícita del buffer como inactivo
     for(int i=0; i<N; i++) buffer[i].activo = 0;
 
     pthread_t hilos_p[3], h_cons;
@@ -212,9 +241,9 @@ int main(int argc, char *argv[]) {
     pthread_join(h_cons, NULL);
 
     //se imprimen los resultados
-    printf("Resultados:\n");
+    printf("Resultados (por caducidad):\n");
     printf("Suma Fichero 1: %d\nSuma Fichero 2: %d\nSuma Fichero 3: %d\n", suma_ficheros[0], suma_ficheros[1], suma_ficheros[2]);
-    printf("Suma Total: %d\n", suma_cons);
+    printf("Suma Total (Solo no caducados): %d\n", suma_cons);
 
     //se libera todo
     pthread_mutex_destroy(&mutex); 
